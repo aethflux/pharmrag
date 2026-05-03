@@ -1,6 +1,6 @@
 import unittest
 
-from app import split_assistant_sections, strip_think_blocks
+from app import build_single_prompt_personal_note, split_assistant_sections, strip_think_blocks
 
 
 class AppRenderingTests(unittest.TestCase):
@@ -22,6 +22,13 @@ class AppRenderingTests(unittest.TestCase):
 
         self.assertEqual(strip_think_blocks(content), "用户可见答案。")
         self.assertEqual(split_assistant_sections(content)["answer"], "用户可见答案。")
+
+    def test_build_single_prompt_personal_note_marks_single_turn_scope(self) -> None:
+        note = build_single_prompt_personal_note("我对青霉素过敏，请以后提醒我。")
+
+        self.assertIn("单次提问", note)
+        self.assertIn("用户明确选择加入个人信息库", note)
+        self.assertIn("青霉素过敏", note)
 
 
 if __name__ == "__main__":

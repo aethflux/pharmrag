@@ -1,10 +1,10 @@
 # MedAgent RAG Agent
 
-一个面向医药问答场景的 RAG Agent Demo，支持多模型切换、知识库检索、长期记忆摘要、资料上传管理、OCR 兜底，以及在模型或向量检索不可用时的本地回退。
+一个面向医药问答场景的 RAG Agent Demo，支持多模型切换、知识库检索、长期记忆摘要、资料上传管理、OCR 兜底和本地回退检索。
 
 ## 项目定位
 
-这个项目聚焦于一个相对高风险、对答案可信度要求较高的垂直场景：医药知识问答。目标不是做通用聊天，而是验证以下能力：
+这个项目聚焦医药知识问答场景，用于验证以下能力：
 
 - 多个 OpenAI 兼容模型接口的统一接入
 - 基于本地知识库的 RAG 检索增强
@@ -19,10 +19,11 @@
 - 多源知识库接入：支持 `md`、`txt`、`json`、`csv`、`docx`、`pdf`、图片、`html`、网页 URL
 - 网页资料导入：在 UI 中粘贴 URL 后抓取正文或 PDF 文本，生成本地 Markdown 知识快照
 - 知识库管理：支持查看知识文件、预览文本资料、删除网页添加资料、手动重建索引
+- 单次个人资料沉淀：用户可在发送某条消息前勾选“将本次提问加入个人信息库”，仅保存该条消息
 - OCR 兜底：扫描版 PDF 和图片资料可通过 Tesseract OCR 抽取文本后入库
-- 检索模式：支持 `vector / hybrid / keyword`，只有 MiniMax API 也能运行
+- 检索模式：支持 `vector / hybrid / keyword`
 - RAG 检索：优先使用 `FAISS + Embeddings`，Embedding Provider 可与聊天模型解耦
-- 回退检索：Embedding 不可用或查询期失败时自动退回本地关键词检索
+- 回退检索：Embedding 调用失败或查询期异常时自动退回本地关键词检索
 - 来源展示：回答尾部自动附带命中的知识来源和片段
 - 安全分级：对紧急风险、诊断判断、个体化用药调整做规则级防护
 - 长期记忆：对历史对话进行 markdown 摘要并持久化
@@ -46,21 +47,21 @@
 
 ## 项目形态
 
-严格说，这个项目的用户入口是 Chat，但工程形态已经不是纯 Chatbot，而是一个轻量级垂直 Agent。
+这个项目是一个面向医药问答的轻量级 RAG Agent。
 
-- Chatbot 部分：用户通过聊天框提问，系统返回自然语言答案。
-- Agent 部分：`MedicalAgent` 负责模型选择、RAG 检索、长期记忆、安全分级、故障回退、来源引用和指标日志。
-- 边界说明：当前还不是复杂 Multi-Agent，也没有自主规划多步工具链；更准确的简历表述是“面向医药问答的 RAG Agent / AI Assistant”。
+- 交互入口：用户通过聊天框提问，系统返回自然语言答案。
+- Agent 编排：`MedicalAgent` 负责模型选择、RAG 检索、长期记忆、安全分级、故障回退、来源引用和指标日志。
+- 工程边界：当前实现采用单 Agent 编排，围绕检索增强问答、知识库管理和安全约束展开。
 
 ## RAG 技术选型
 
-- 知识导入：采用本地文件 + UI 上传 + URL 快照导入。URL 不在每次索引时实时抓取，而是在用户显式添加时转成 Markdown 快照，保证索引可复现，也避免运行时网络波动影响问答。
+- 知识导入：采用本地文件 + UI 上传 + URL 快照导入。URL 在用户显式添加时转成 Markdown 快照，保证索引可复现，也降低运行时网络波动对问答的影响。
 - 文档解析：内置 `md/txt/json/jsonl/csv/docx/pdf/image/html` 解析。HTML 与 URL 页面会先做正文提取，PDF 会抽取页文本并保留页码标记；扫描版 PDF 或图片会走 OCR 兜底。
 - 文本切分：先按 Markdown 标题切成独立证据块，再用 `RecursiveCharacterTextSplitter` 做长段落二次切分，避免同一文件中相邻主题被混入同一个上下文块。
-- 向量检索：使用 `FAISS + OpenAI-compatible Embeddings`，Embedding Provider 可在 UI 中独立选择 OpenAI、ModelScope 或关闭，适合本地 Demo 和简历项目，部署成本低，不依赖独立向量数据库。
-- 混合检索：支持 `vector / hybrid / keyword`。向量检索负责语义召回，`jieba + 正则 token` 的关键词检索负责药名、剂量、禁忌词等精确命中，并在 Embedding 不可用时兜底。
+- 向量检索：使用 `FAISS + OpenAI-compatible Embeddings`，Embedding Provider 可在 UI 中独立选择 OpenAI、ModelScope 或关闭，向量索引本地持久化。
+- 混合检索：支持 `vector / hybrid / keyword`。向量检索负责语义召回，`jieba + 正则 token` 的关键词检索负责药名、剂量、禁忌词等精确命中，并在 Embedding 调用失败时兜底。
 - 本地重排：`hybrid` 模式会扩大候选集，再用向量排名、查询关键词覆盖、标题/别名命中和通用医学问法同义词做 lightweight rerank，避免单纯拼接结果导致高精确命中的片段排在后面。
-- 相关性门控：检索结果进入模型上下文前，会基于查询特异词、标题命中、命中词覆盖和相关性分数过滤低相关片段；不依赖内置药品或疾病白名单，知识库可以持续扩充。
+- 相关性门控：检索结果进入模型上下文前，会基于查询特异词、标题命中、命中词覆盖和相关性分数过滤低相关片段；知识库可通过文件、文本和 URL 持续扩充。
 - 上下文呈现：每个证据块都会带来源、相关性分数和命中词，prompt 要求模型忽略明显无关片段；前端会把“回答依据”和“参考来源”折叠，默认只展示主体回答。
 - 索引缓存：基于知识文件内容、Embedding 模型、检索配置生成 manifest；知识库变化后自动重建 FAISS，否则复用本地缓存。
 
@@ -114,7 +115,7 @@ medagent/
 │  ├─ sample.docx
 │  ├─ sample.url
 │  └─ sample.urls
-├─ personal_knowledge/      # 本地个人资料库，默认不提交到 Git
+├─ personal_knowledge/      # 本地个人资料库
 └─ memory/
    ├─ conversation_history.md
    └─ conversation_summary.md
@@ -146,15 +147,6 @@ PERSONAL_KNOWLEDGE_ENABLED=false
 RETRIEVAL_CANDIDATE_MULTIPLIER=5
 RETRIEVAL_MIN_RELEVANCE_SCORE=2.0
 RETRIEVAL_MIN_SIGNAL_OVERLAP=1
-```
-
-如果你目前只有 MiniMax API，推荐这样配：
-
-```env
-LLM_PROVIDER=minimax
-EMBEDDING_PROVIDER=none
-RETRIEVAL_MODE=keyword
-MINIMAX_API_KEY=your-minimax-key
 ```
 
 ### 3. 启动应用
@@ -192,15 +184,16 @@ streamlit run app.py
 ## 使用流程
 
 1. 在侧边栏选择聊天模型 Provider
-2. 选择 Embedding Provider；它只影响知识库向量化和召回，可以与聊天模型不同
+2. 选择 Embedding Provider；它负责知识库向量化和召回，可独立于聊天模型配置
 3. 输入对应 API Key，或从 `.env` 自动读取；Embedding Key 留空时会优先复用同 Provider 的聊天 Key
 4. 点击“初始化 Agent”
-5. 按需打开“启用医疗知识库”和“启用个人信息库”开关；关闭的知识库不会进入模型上下文
+5. 按需打开“启用医疗知识库”和“启用个人信息库”开关；开启的知识库会进入模型上下文
 6. 如需补充知识库，在侧边栏“知识库”中选择保存目标，上传文件、粘贴文本或输入 URL 后点击“保存并刷新知识库”
-7. 在主界面输入医药相关问题
+7. 如果某次提问包含希望长期保留的个人背景，可先勾选“将本次提问加入个人信息库”，该选项只作用于下一条消息
+8. 在主界面输入医药相关问题
 
 医疗资料默认读取 `knowledge/`，网页添加的医疗资料会保存到 `knowledge/uploads/`。
-个人资料默认读取 `personal_knowledge/`，该目录默认不提交到 Git，且个人信息库默认关闭。
+个人资料默认读取 `personal_knowledge/`，个人信息库默认关闭。
 URL 导入会拒绝本机、内网和非 `http(s)` 地址；如需限制可导入域名，可配置 `REMOTE_KNOWLEDGE_ALLOWLIST`。
 OCR 依赖本机 Tesseract 程序；如果 Windows 没有安装，可先安装 Tesseract，并在 `.env` 中配置 `TESSERACT_CMD`。
 侧边栏“查看当前状态”会显示 OCR 是否可用；侧边栏“知识库”可以预览资料、删除网页添加资料并手动重建索引。
@@ -285,6 +278,6 @@ python -m pytest
 
 ## 已知限制
 
-- 本项目仅用于技术演示，不构成医疗建议
-- 当前知识库内容较少，答案质量高度依赖样本覆盖
-- 不同 Provider 的模型能力和兼容性存在差异
+- 项目定位为技术演示，医疗问题应结合医生或药师意见。
+- 当前知识库内容较少，答案质量高度依赖样本覆盖。
+- 各 Provider 的模型能力和兼容性存在差异。

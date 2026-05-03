@@ -293,6 +293,10 @@ def init_session_state() -> None:
         st.session_state.api_key_inputs = {}
     if "pending_prompt" not in st.session_state:
         st.session_state.pending_prompt = ""
+    if "save_next_prompt_to_personal_knowledge" not in st.session_state:
+        st.session_state.save_next_prompt_to_personal_knowledge = False
+    if "reset_single_prompt_save_option" not in st.session_state:
+        st.session_state.reset_single_prompt_save_option = False
     if "session_editor_id" not in st.session_state:
         st.session_state.session_editor_id = ""
     if "session_editor_title" not in st.session_state:
@@ -443,6 +447,13 @@ def reset_session_action_state() -> None:
     st.session_state.session_editor_id = ""
     st.session_state.session_editor_title = ""
     st.session_state.session_delete_confirm_id = ""
+
+
+def reset_single_prompt_save_option_if_needed() -> None:
+    if not st.session_state.get("reset_single_prompt_save_option", False):
+        return
+    st.session_state.save_next_prompt_to_personal_knowledge = False
+    st.session_state.reset_single_prompt_save_option = False
 
 
 def get_runtime_snapshot() -> dict[str, Any]:
@@ -779,6 +790,55 @@ def delete_knowledge_action(relative_path: str, knowledge_dir: str, store: str) 
             f"已从{knowledge_store_label(store)}删除资料：{deleted_path.name}。"
             "初始化 Agent 后会加载最新知识库。"
         )
+
+
+def build_single_prompt_personal_note(prompt: str) -> str:
+    body = prompt.strip()
+    return (
+        "## 用户选择保存的单次提问\n\n"
+        "以下内容来自用户本次提问，用户明确选择加入个人信息库：\n\n"
+        f"{body}"
+    )
+
+
+def save_single_prompt_to_personal_knowledge(prompt: str) -> None:
+    try:
+        saved_path = write_text_knowledge(
+            "单次提问个人资料",
+            build_single_prompt_personal_note(prompt),
+            knowledge_dir=PERSONAL_KNOWLEDGE_DIR,
+        )
+    except Exception as exc:
+        st.session_state.status_level = "error"
+        st.session_state.status_message = f"本次提问未能保存到个人信息库：{exc}"
+        return
+
+    if not st.session_state.agent:
+        st.session_state.status_level = "success"
+        st.session_state.status_message = f"已保存本次提问到个人信息库：{saved_path.name}"
+        return
+
+    try:
+        st.session_state.agent.init_retriever()
+        sync_knowledge_flags_to_agent()
+    except Exception as exc:
+        st.session_state.status_level = "warning"
+        st.session_state.status_message = (
+            f"已保存本次提问到个人信息库，但刷新索引失败：{exc}"
+        )
+        return
+
+    retriever_error = getattr(st.session_state.agent, "retriever_error", "")
+    if retriever_error:
+        st.session_state.status_level = "warning"
+        st.session_state.status_message = (
+            "已保存本次提问到个人信息库，但检索刷新异常，当前会退回关键词检索。\n\n"
+            f"原因：{retriever_error}"
+        )
+        return
+
+    st.session_state.status_level = "success"
+    st.session_state.status_message = f"已保存本次提问到个人信息库：{saved_path.name}"
 
 
 def parse_session_timestamp(value: str) -> datetime | None:
@@ -1328,6 +1388,13 @@ def display_message(role: str, content: str) -> None:
 
 
 def process_prompt(prompt: str) -> None:
+    save_to_personal = bool(
+        st.session_state.get("save_next_prompt_to_personal_knowledge", False)
+    )
+    if save_to_personal:
+        save_single_prompt_to_personal_knowledge(prompt)
+        st.session_state.reset_single_prompt_save_option = True
+
     display_message("user", prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
@@ -1340,6 +1407,7 @@ def process_prompt(prompt: str) -> None:
 
 def render_chat_workspace(snapshot: dict[str, Any]) -> None:
     agent_ready = st.session_state.agent is not None
+    reset_single_prompt_save_option_if_needed()
 
     if not agent_ready:
         st.markdown(
@@ -1373,6 +1441,14 @@ def render_chat_workspace(snapshot: dict[str, Any]) -> None:
         display_message(message["role"], message["content"])
 
     queued_prompt = st.session_state.pending_prompt
+    st.checkbox(
+        "将本次提问加入个人信息库",
+        key="save_next_prompt_to_personal_knowledge",
+        help=(
+            "只保存下一条发送的用户原文，不保存整个会话；发送后会自动关闭。"
+            "如果个人信息库开关关闭，本轮回答不会使用该资料，但会保存供之后打开时使用。"
+        ),
+    )
     prompt = st.chat_input("输入医药问题，例如用法用量、不良反应、禁忌或特殊人群注意事项...")
     if queued_prompt:
         st.session_state.pending_prompt = ""
