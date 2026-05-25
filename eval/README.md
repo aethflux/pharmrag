@@ -42,7 +42,7 @@ python eval/run_eval.py --min-retrieval-hit-rate 0.6 --min-keyword-coverage-rate
 回答级评测示例：
 
 ```bash
-python eval/run_answer_eval.py --provider minimax --api-key your-minimax-key
+python eval/run_answer_eval.py --provider modelscope --api-key your-modelscope-key
 ```
 
 ## 输出说明
@@ -50,6 +50,10 @@ python eval/run_answer_eval.py --provider minimax --api-key your-minimax-key
 - `retrieval_hit_rate`: 至少命中一个期望关键词的比例
 - `source_hit_rate`: 期望来源文件命中的比例
 - `keyword_coverage_rate`: 所有期望关键词的整体覆盖率
+- `citation_pass_rate`: 需要引用时是否输出参考来源
+- `guardrail_pass_rate`: 高风险问题是否触发安全提示
+- `attachment_grounding_rate`: 附件问题是否体现附件内容
+- `forbidden_keyword_pass_rate`: 是否避开禁止性结论或危险建议
 - 阈值参数不达标时脚本返回非零退出码，适合接入 CI
 
 ## 后续建议

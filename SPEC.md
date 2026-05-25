@@ -89,10 +89,10 @@ Agent：李主任，XX医院心内科主任医师，研究方向为冠心病介�
 
 ### 技术选型
 
-- **大模型**：支持多平台API（OpenAI / ModelScope / MiniMax）
-- **框架**：LangChain + Streamlit
+- **大模型**：支持 OpenAI-compatible API（ModelScope / OpenAI）
+- **框架**：LangChain + LangGraph + Streamlit + FastAPI
 - **知识库**：本地JSON/Markdown文件 + FAISS向量检索
-- **部署**：Streamlit Cloud / Vercel（免费）
+- **部署**：本地脚本 / Docker Compose
 
 ### 多平台API适配
 
@@ -105,12 +105,8 @@ LLM_PROVIDERS = {
         "model": "gpt-4o"
     },
     "modelscope": {
-        "api_base": "https://api.modelscope.cn/v1",
-        "model": "qwen-plus"
-    },
-    "minimax": {
-        "api_base": "https://api.minimax.chat/v1",
-        "model": "abab6.5s-chat"
+        "api_base": "https://api-inference.modelscope.cn/v1",
+        "model": "moonshotai/Kimi-K2.5"
     }
 }
 ```

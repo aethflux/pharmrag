@@ -2,10 +2,17 @@ import os
 import unittest
 from unittest.mock import patch
 
-from config import get_api_key_for_provider, get_provider_config
+from config import DEFAULT_PROVIDER, LLM_PROVIDERS, get_api_key_for_provider, get_provider_config
 
 
 class ConfigTests(unittest.TestCase):
+    def test_default_provider_is_modelscope(self) -> None:
+        self.assertEqual(DEFAULT_PROVIDER, "modelscope")
+
+    def test_removed_provider_is_absent(self) -> None:
+        removed_provider = "mini" + "max"
+        self.assertNotIn(removed_provider, LLM_PROVIDERS)
+
     def test_get_provider_config_falls_back_to_openai(self) -> None:
         config = get_provider_config("unknown-provider")
         self.assertEqual(config["api_base"], "https://api.openai.com/v1")

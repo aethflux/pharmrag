@@ -1,0 +1,13 @@
+.git
+venv
+.venv
+__pycache__
+.pytest_cache
+.cache
+logs
+memory
+personal_knowledge
+pytest-cache-files-*
+streamlit.out.log
+streamlit.err.log
+.env

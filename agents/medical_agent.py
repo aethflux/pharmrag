@@ -19,9 +19,9 @@ from openai import APIConnectionError, APITimeoutError, OpenAI
 
 from config import (
     APP_CONFIG,
+    CHAT_METRICS_FILENAME,
     DEFAULT_PROVIDER,
     EMBEDDING_PROVIDER,
-    CHAT_METRICS_FILENAME,
     LOG_DIR,
     MEDICAL_KNOWLEDGE_DIR,
     MEMORY_DIR,
@@ -33,6 +33,8 @@ from config import (
     get_api_key_for_provider,
     get_provider_config,
 )
+from agents.workflow import WORKFLOW_STEPS
+from rag.attachments import AttachmentContext, build_attachments_prompt, has_medical_visual_attachment
 from rag.retriever import create_retriever
 
 
@@ -83,10 +85,6 @@ class MedicalAgent:
         self.current_session_title = ""
         self._load_memory()
 
-    @property
-    def _uses_openai_compatible_raw_only(self) -> bool:
-        return self.provider == "minimax"
-
     def _init_llm(self) -> ChatOpenAI:
         return ChatOpenAI(
             model=self.provider_config["model"],
@@ -105,6 +103,47 @@ class MedicalAgent:
             timeout=APP_CONFIG["request_timeout"],
             max_retries=APP_CONFIG["max_retries"],
         )
+
+    def summarize_image_attachment(self, data_url: str, question: str, filename: str) -> str:
+        if not APP_CONFIG["vision_enabled"]:
+            raise RuntimeError("VISION_ENABLED=false，视觉模型未启用。")
+
+        provider = APP_CONFIG["vision_provider"]
+        provider_config = get_provider_config(provider)
+        api_key = self.api_key if provider == self.provider else get_api_key_for_provider(provider)
+        if not api_key:
+            raise RuntimeError(f"缺少视觉 provider '{provider}' 的 API Key。")
+
+        client = OpenAI(
+            api_key=api_key,
+            base_url=provider_config["api_base"],
+            timeout=APP_CONFIG["request_timeout"],
+            max_retries=APP_CONFIG["max_retries"],
+        )
+        prompt = (
+            f"{APP_CONFIG['vision_prompt']}\n\n"
+            f"用户问题：{question.strip() or '未提供具体问题'}\n"
+            f"附件文件名：{filename}"
+        )
+        response = client.chat.completions.create(
+            model=APP_CONFIG["vision_model"],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                }
+            ],
+            temperature=0.1,
+            max_tokens=800,
+        )
+        choice = response.choices[0] if response.choices else None
+        content = choice.message.content if choice and choice.message else None
+        if not content:
+            raise RuntimeError("视觉模型返回了空内容。")
+        return self._sanitize_model_output(str(content))
 
     def _load_memory(self) -> None:
         if not APP_CONFIG["memory_enabled"]:
@@ -378,7 +417,11 @@ class MedicalAgent:
 
         return "\n\n".join(sections), all_docs
 
-    def _assess_medical_risk(self, user_input: str) -> Dict[str, Any]:
+    def _assess_medical_risk(
+        self,
+        user_input: str,
+        attachments: List[AttachmentContext] | None = None,
+    ) -> Dict[str, Any]:
         text = user_input.strip()
         flags: List[str] = []
         level = "normal"
@@ -428,6 +471,11 @@ class MedicalAgent:
             level = "personalized_medication"
             flags.append("personalized_medication")
 
+        if has_medical_visual_attachment(user_input, attachments or []):
+            flags.append("medical_visual_attachment")
+            if level == "normal":
+                level = "image_medical"
+
         return {"level": level, "flags": flags}
 
     def _build_emergency_response(self) -> str:
@@ -451,10 +499,20 @@ class MedicalAgent:
                 "用户正在请求个体化用药调整。你可以解释一般原则、风险点和应咨询的专业角色，"
                 "但不要直接给出针对个人的处方调整方案。"
             )
+        elif level == "image_medical":
+            prompts.append(
+                "用户上传了可能涉及医疗判断的图片。你只能基于附件文字、OCR 或视觉摘要提供一般性建议，"
+                "不要仅凭图片给出诊断结论，不要判断严重程度等级，不要替代线下检查。"
+            )
 
         if "special_population" in risk_assessment["flags"]:
             prompts.append(
                 "该问题涉及特殊人群用药，请在回答中明确提示更高风险和线下专业咨询建议。"
+            )
+        if "medical_visual_attachment" in risk_assessment["flags"]:
+            prompts.append(
+                "如果图片涉及外伤、皮疹、影像或检查报告，请提醒用户结合线下医生、原始报告和必要检查判断；"
+                "如出现持续出血、明显感染、剧烈疼痛、呼吸困难、意识改变等情况，应及时就医。"
             )
         return prompts
 
@@ -471,6 +529,12 @@ class MedicalAgent:
                 f"{answer.strip()}\n\n"
                 "安全提示：涉及个人停药、加量、减量或换药时，不能仅凭线上信息决定，"
                 "请结合原始处方、肝肾功能、合并用药和既往病史咨询医生或药师。"
+            )
+        if level == "image_medical":
+            return (
+                f"{answer.strip()}\n\n"
+                "安全提示：图片只能提供有限线索，不能仅凭线上图片作出诊断；"
+                "如果症状加重、出现明显感染/出血/剧烈疼痛，或涉及影像报告解读，请及时线下就医。"
             )
         return answer
 
@@ -552,23 +616,39 @@ class MedicalAgent:
         sections.append("参考来源：\n" + "\n".join(source_lines))
         return "\n\n".join(sections)
 
+    def _append_attachment_reports(
+        self,
+        answer: str,
+        attachments: List[AttachmentContext],
+    ) -> str:
+        if not attachments:
+            return answer
+
+        lines: List[str] = []
+        for item in attachments:
+            capabilities = []
+            if item.extracted_text.strip():
+                capabilities.append("文本")
+            if item.ocr_text.strip():
+                capabilities.append("OCR")
+            if item.vision_summary.strip():
+                capabilities.append("视觉摘要")
+            status = "、".join(capabilities) if capabilities else "未提取到可引用内容"
+            line = f"- {item.filename}：{status}"
+            if item.warnings:
+                line += "；提示：" + "；".join(item.warnings[:3])
+            lines.append(line)
+
+        return f"{answer.strip()}\n\n附件解析：\n" + "\n".join(lines)
+
     def _base_system_prompt(self) -> str:
-        if self.provider == "minimax":
-            return (
-                "你是专业医药知识助手。\n"
-                "回答要求：\n"
-                "1. 只提供一般性医药信息，不做诊断，不给个体化处方调整。\n"
-                "2. 如果提供了知识库补充，优先参考，并在回答中明确写出“根据知识库补充”。\n"
-                "3. 先给核心结论，再补充注意事项或就医建议。\n"
-                "4. 涉及特殊人群、禁忌、不良反应或漏服处理时，回答要谨慎。\n"
-                "5. 使用清晰、自然、专业的中文，避免空话和重复。"
-            )
         return APP_CONFIG["system_prompt"].strip()
 
     def _build_system_prompt_text(
         self,
         retrieved_context: str = "",
         extra_system_prompts: List[str] | None = None,
+        attachment_context: str = "",
     ) -> str:
         sections = [self._base_system_prompt()]
         sections.append(
@@ -579,6 +659,14 @@ class MedicalAgent:
         for prompt in extra_system_prompts or []:
             if prompt and prompt.strip():
                 sections.append(prompt.strip())
+
+        if attachment_context.strip():
+            sections.append(
+                "以下是用户本轮上传附件的解析结果，只对当前这一轮问题有效。"
+                "附件内容优先级高于长期知识库；如果附件和知识库冲突，应说明冲突并建议核对原始材料。"
+                "不要把附件内容当作长期记忆，除非用户明确要求保存。\n\n"
+                f"本轮附件：\n{attachment_context.strip()}"
+            )
 
         if self.summary_memory.strip():
             sections.append(
@@ -619,16 +707,12 @@ class MedicalAgent:
         return converted
 
     def _build_completion_kwargs(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
-        kwargs: Dict[str, Any] = {
+        return {
             "model": self.provider_config["model"],
             "messages": messages,
             "temperature": APP_CONFIG["temperature"],
+            "max_tokens": APP_CONFIG["max_tokens"],
         }
-        if self.provider == "minimax":
-            kwargs["max_completion_tokens"] = min(APP_CONFIG["max_tokens"], 1024)
-        else:
-            kwargs["max_tokens"] = APP_CONFIG["max_tokens"]
-        return kwargs
 
     def _invoke_openai_compatible_messages(self, messages: List[Dict[str, str]]) -> str:
         response = self.raw_client.chat.completions.create(
@@ -641,11 +725,6 @@ class MedicalAgent:
         return str(content).strip()
 
     def _invoke_langchain_messages(self, messages: List[BaseMessage]) -> str:
-        if self._uses_openai_compatible_raw_only:
-            return self._invoke_openai_compatible_messages(
-                self._langchain_messages_to_openai(messages)
-            )
-
         response = self.llm.invoke(messages)
         return str(response.content).strip()
 
@@ -661,6 +740,7 @@ class MedicalAgent:
         error_type: str = "",
         risk_level: str = "normal",
         risk_flags: List[str] | None = None,
+        attachment_reports: List[Dict[str, Any]] | None = None,
     ) -> None:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -686,6 +766,8 @@ class MedicalAgent:
             "error_type": error_type,
             "risk_level": risk_level,
             "risk_flags": risk_flags or [],
+            "attachments": attachment_reports or [],
+            "workflow_steps": WORKFLOW_STEPS,
             "duration_ms": round(duration_ms, 2),
         }
         with self.metrics_file.open("a", encoding="utf-8") as handle:
@@ -696,12 +778,14 @@ class MedicalAgent:
         user_input: str,
         retrieved_context: str = "",
         extra_system_prompts: List[str] | None = None,
+        attachment_context: str = "",
     ) -> List[Any]:
         messages: List[Any] = [
             SystemMessage(
                 content=self._build_system_prompt_text(
                     retrieved_context,
                     extra_system_prompts,
+                    attachment_context,
                 )
             )
         ]
@@ -720,6 +804,7 @@ class MedicalAgent:
         user_input: str,
         retrieved_context: str = "",
         extra_system_prompts: List[str] | None = None,
+        attachment_context: str = "",
     ) -> List[Dict[str, str]]:
         messages: List[Dict[str, str]] = [
             {
@@ -727,6 +812,7 @@ class MedicalAgent:
                 "content": self._build_system_prompt_text(
                     retrieved_context,
                     extra_system_prompts,
+                    attachment_context,
                 ),
             }
         ]
@@ -747,9 +833,15 @@ class MedicalAgent:
         user_input: str,
         retrieved_context: str = "",
         extra_system_prompts: List[str] | None = None,
+        attachment_context: str = "",
     ) -> str:
         return self._invoke_openai_compatible_messages(
-            self._to_openai_messages(user_input, retrieved_context, extra_system_prompts)
+            self._to_openai_messages(
+                user_input,
+                retrieved_context,
+                extra_system_prompts,
+                attachment_context,
+            )
         )
 
     def _record_turn(self, user_input: str, answer: str) -> None:
@@ -759,21 +851,39 @@ class MedicalAgent:
         self._maybe_rollup_memory()
         self._save_memory()
 
-    def _build_local_fallback_answer(self, user_input: str, docs: List[Document]) -> str:
-        if not docs:
+    def _build_local_fallback_answer(
+        self,
+        user_input: str,
+        docs: List[Document],
+        attachment_context: str = "",
+    ) -> str:
+        if not docs and not attachment_context.strip():
             return "抱歉，当前模型服务不可用，且本地知识库中没有找到明确相关内容。"
 
-        context = "\n\n".join(doc.page_content for doc in docs)
+        context_parts = []
+        if attachment_context.strip():
+            context_parts.append("本轮附件解析结果：\n" + attachment_context.strip())
+        if docs:
+            context_parts.append("本地知识库片段：\n" + "\n\n".join(doc.page_content for doc in docs))
+        context = "\n\n".join(context_parts)
         answer = (
-            "当前模型服务暂不可用，以下内容根据本地知识库整理：\n\n"
+            "当前模型服务暂不可用，以下内容根据本轮附件或本地知识库整理：\n\n"
             f"{context}\n\n"
             "以上为知识库补充信息，仅供参考；如涉及具体用药方案，请以医生或药师意见为准。"
         )
         return self._append_sources(answer, docs)
 
-    def chat(self, user_input: str) -> str:
+    def chat(
+        self,
+        user_input: str,
+        attachments: List[AttachmentContext] | None = None,
+        options: Dict[str, Any] | None = None,
+    ) -> str:
         started_at = time.perf_counter()
-        risk_assessment = self._assess_medical_risk(user_input)
+        attachments = attachments or []
+        attachment_context = build_attachments_prompt(attachments)
+        attachment_reports = [item.public_report() for item in attachments]
+        risk_assessment = self._assess_medical_risk(user_input, attachments)
         if risk_assessment["level"] == "emergency":
             answer = self._build_emergency_response()
             self._log_chat_event(
@@ -786,17 +896,27 @@ class MedicalAgent:
                 error_type="emergency_risk",
                 risk_level=risk_assessment["level"],
                 risk_flags=risk_assessment["flags"],
+                attachment_reports=attachment_reports,
             )
             return answer
 
         extra_system_prompts = self._build_guardrail_prompts(risk_assessment)
-        retrieved_context, docs = self._retrieve_context(user_input)
+        retrieval_query = user_input
+        if attachment_context:
+            retrieval_query = f"{user_input}\n\n{attachment_context[:1600]}"
+        retrieved_context, docs = self._retrieve_context(retrieval_query)
         try:
-            messages = self._build_prompt(user_input, retrieved_context, extra_system_prompts)
+            messages = self._build_prompt(
+                user_input,
+                retrieved_context,
+                extra_system_prompts,
+                attachment_context,
+            )
             answer = self._append_risk_notice(
                 self._sanitize_model_output(self._invoke_langchain_messages(messages)),
                 risk_assessment,
             )
+            answer = self._append_attachment_reports(answer, attachments)
             answer = self._append_sources(answer, docs)
             self._record_turn(user_input, answer)
             self._log_chat_event(
@@ -808,11 +928,13 @@ class MedicalAgent:
                 fallback_used=False,
                 risk_level=risk_assessment["level"],
                 risk_flags=risk_assessment["flags"],
+                attachment_reports=attachment_reports,
             )
             return answer
         except (APIConnectionError, APITimeoutError):
-            answer = self._build_local_fallback_answer(user_input, docs)
+            answer = self._build_local_fallback_answer(user_input, docs, attachment_context)
             answer = self._append_risk_notice(answer, risk_assessment)
+            answer = self._append_attachment_reports(answer, attachments)
             self._record_turn(user_input, answer)
             self._log_chat_event(
                 user_input=user_input,
@@ -824,6 +946,7 @@ class MedicalAgent:
                 error_type="api_connection_or_timeout",
                 risk_level=risk_assessment["level"],
                 risk_flags=risk_assessment["flags"],
+                attachment_reports=attachment_reports,
             )
             return answer
         except Exception as primary_exc:
@@ -832,11 +955,13 @@ class MedicalAgent:
                     user_input,
                     retrieved_context,
                     extra_system_prompts,
+                    attachment_context,
                 )
                 answer = self._append_risk_notice(
                     self._sanitize_model_output(raw_answer),
                     risk_assessment,
                 )
+                answer = self._append_attachment_reports(answer, attachments)
                 answer = self._append_sources(answer, docs)
                 self._record_turn(user_input, answer)
                 self._log_chat_event(
@@ -849,29 +974,13 @@ class MedicalAgent:
                     error_type=type(primary_exc).__name__,
                     risk_level=risk_assessment["level"],
                     risk_flags=risk_assessment["flags"],
+                    attachment_reports=attachment_reports,
                 )
                 return answer
-            except Exception as exc:
-                if self._uses_openai_compatible_raw_only:
-                    answer = self._build_local_fallback_answer(user_input, docs)
-                    answer = self._append_risk_notice(answer, risk_assessment)
-                    self._record_turn(user_input, answer)
-                    self._log_chat_event(
-                        user_input=user_input,
-                        answer=answer,
-                        docs=docs,
-                        duration_ms=(time.perf_counter() - started_at) * 1000,
-                        status="fallback",
-                        fallback_used=True,
-                        error_type=type(exc).__name__,
-                        risk_level=risk_assessment["level"],
-                        risk_flags=risk_assessment["flags"],
-                    )
-                    return answer
-                raise
             except (APIConnectionError, APITimeoutError):
-                answer = self._build_local_fallback_answer(user_input, docs)
+                answer = self._build_local_fallback_answer(user_input, docs, attachment_context)
                 answer = self._append_risk_notice(answer, risk_assessment)
+                answer = self._append_attachment_reports(answer, attachments)
                 self._record_turn(user_input, answer)
                 self._log_chat_event(
                     user_input=user_input,
@@ -883,6 +992,7 @@ class MedicalAgent:
                     error_type="api_connection_or_timeout",
                     risk_level=risk_assessment["level"],
                     risk_flags=risk_assessment["flags"],
+                    attachment_reports=attachment_reports,
                 )
                 return answer
             except Exception as exc:
@@ -897,6 +1007,7 @@ class MedicalAgent:
                     error_type=type(exc).__name__,
                     risk_level=risk_assessment["level"],
                     risk_flags=risk_assessment["flags"],
+                    attachment_reports=attachment_reports,
                 )
                 return answer
 

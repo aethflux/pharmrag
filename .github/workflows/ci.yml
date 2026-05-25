@@ -8,10 +8,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     env:
-      LLM_PROVIDER: minimax
+      LLM_PROVIDER: modelscope
       EMBEDDING_PROVIDER: none
       RETRIEVAL_MODE: keyword
       OCR_ENABLED: false
+      VISION_ENABLED: false
     steps:
       - name: Checkout
         uses: actions/checkout@v6

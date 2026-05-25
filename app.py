@@ -25,6 +25,12 @@ from config import (
     PERSONAL_KNOWLEDGE_DIR,
     get_provider_config,
 )
+from rag.attachments import (
+    CHAT_ATTACHMENT_EXTENSIONS,
+    AttachmentContext,
+    build_personal_knowledge_attachment_summary,
+    parse_attachment_bytes,
+)
 from rag.knowledge_manager import (
     UPLOADED_KNOWLEDGE_EXTENSIONS,
     delete_uploaded_knowledge,
@@ -48,7 +54,6 @@ st.set_page_config(
 PROVIDER_LABELS = {
     "openai": "OpenAI",
     "modelscope": "ModelScope",
-    "minimax": "MiniMax",
 }
 
 EMBEDDING_PROVIDER_LABELS = {
@@ -58,6 +63,7 @@ EMBEDDING_PROVIDER_LABELS = {
 }
 
 EMBEDDING_PROVIDER_OPTIONS = list(EMBEDDING_MODELS.keys()) + ["none"]
+CHAT_PROVIDER_OPTIONS = ["modelscope", "openai"]
 
 EXAMPLE_PROMPTS = [
     "某个药品应该饭前吃还是饭后吃？",
@@ -67,7 +73,7 @@ EXAMPLE_PROMPTS = [
 ]
 
 SECTION_HEADER_PATTERN = re.compile(
-    r"(?m)^(?:#{1,6}\s*)?(回答依据|思考过程|推理过程|分析过程|参考来源|参考文献|References)\s*[:：]?\s*$"
+    r"(?m)^(?:#{1,6}\s*)?(回答依据|附件解析|思考过程|推理过程|分析过程|参考来源|参考文献|References)\s*[:：]?\s*$"
 )
 THINK_BLOCK_PATTERN = re.compile(r"(?is)<think\b[^>]*>.*?</think\s*>")
 THINK_OPEN_PATTERN = re.compile(r"(?is)<think\b[^>]*>.*")
@@ -225,6 +231,16 @@ section[data-testid="stSidebar"] {
     font-size: 0.98rem !important;
 }
 
+.composer-note {
+    color: var(--muted);
+    font-size: 0.78rem;
+    margin: -0.25rem 0 0.35rem;
+}
+
+.composer-gap {
+    height: 0.65rem;
+}
+
 .stButton button {
     border-radius: 14px;
     border: 1px solid rgba(22, 34, 40, 0.08);
@@ -241,7 +257,8 @@ section[data-testid="stSidebar"] {
 }
 
 [data-baseweb="select"] > div,
-.stTextInput input {
+.stTextInput input,
+.stTextArea textarea {
     border-radius: 14px !important;
 }
 
@@ -315,6 +332,8 @@ def init_session_state() -> None:
         st.session_state.knowledge_delete_confirm_store = "medical"
     if "knowledge_store" not in st.session_state:
         st.session_state.knowledge_store = "medical"
+    if "chat_attachment_version" not in st.session_state:
+        st.session_state.chat_attachment_version = 0
     if "use_medical_knowledge" not in st.session_state:
         st.session_state.use_medical_knowledge = APP_CONFIG["medical_knowledge_enabled"]
     if "use_personal_knowledge" not in st.session_state:
@@ -326,8 +345,6 @@ def get_env_api_key(provider: str) -> str:
         return os.getenv("OPENAI_API_KEY", "")
     if provider == "modelscope":
         return os.getenv("MODELSCOPE_API_KEY", "")
-    if provider == "minimax":
-        return os.getenv("MINIMAX_API_KEY", "")
     return ""
 
 
@@ -705,6 +722,19 @@ def format_file_size(size: int) -> str:
     return f"{size / (1024 * 1024):.1f} MB"
 
 
+def chat_attachment_file_types() -> list[str]:
+    return [suffix.lstrip(".") for suffix in sorted(CHAT_ATTACHMENT_EXTENSIONS)]
+
+
+def normalize_chat_prompt(prompt: str, has_attachments: bool) -> str:
+    normalized = prompt.strip()
+    if normalized:
+        return normalized
+    if has_attachments:
+        return "请根据本轮附件提供医药相关信息和注意事项。"
+    return ""
+
+
 def refresh_retriever_after_knowledge_update(saved_count: int, errors: list[str]) -> None:
     error_note = ""
     if errors:
@@ -792,20 +822,21 @@ def delete_knowledge_action(relative_path: str, knowledge_dir: str, store: str) 
         )
 
 
-def build_single_prompt_personal_note(prompt: str) -> str:
-    body = prompt.strip()
-    return (
-        "## 用户选择保存的单次提问\n\n"
-        "以下内容来自用户本次提问，用户明确选择加入个人信息库：\n\n"
-        f"{body}"
-    )
+def build_single_prompt_personal_note(
+    prompt: str,
+    attachments: list[AttachmentContext] | None = None,
+) -> str:
+    return build_personal_knowledge_attachment_summary(prompt, attachments or [])
 
 
-def save_single_prompt_to_personal_knowledge(prompt: str) -> None:
+def save_single_prompt_to_personal_knowledge(
+    prompt: str,
+    attachments: list[AttachmentContext] | None = None,
+) -> None:
     try:
         saved_path = write_text_knowledge(
             "单次提问个人资料",
-            build_single_prompt_personal_note(prompt),
+            build_single_prompt_personal_note(prompt, attachments),
             knowledge_dir=PERSONAL_KNOWLEDGE_DIR,
         )
     except Exception as exc:
@@ -1170,8 +1201,12 @@ def render_sidebar(snapshot: dict[str, Any]) -> None:
 
         selected_provider = st.selectbox(
             "聊天模型",
-            options=["openai", "modelscope", "minimax"],
-            index=["openai", "modelscope", "minimax"].index(st.session_state.provider),
+            options=CHAT_PROVIDER_OPTIONS,
+            index=CHAT_PROVIDER_OPTIONS.index(
+                st.session_state.provider
+                if st.session_state.provider in CHAT_PROVIDER_OPTIONS
+                else DEFAULT_PROVIDER
+            ),
             format_func=lambda value: PROVIDER_LABELS[value],
         )
         st.session_state.provider = selected_provider
@@ -1247,6 +1282,10 @@ def render_sidebar(snapshot: dict[str, Any]) -> None:
             st.caption(f"当前标题：`{snapshot['current_session_title'] or '-'} `")
             st.caption(f"Embedding：`{snapshot['active_embedding_provider_label']}`")
             st.caption(f"Embedding 模型：`{snapshot['active_embedding_model'] or '-'}`")
+            st.caption(
+                f"视觉模型：`{'on' if APP_CONFIG['vision_enabled'] else 'off'}` · "
+                f"`{APP_CONFIG['vision_model']}`"
+            )
             st.caption(f"检索模式：`{snapshot['actual_retrieval_mode']}`")
             st.caption(
                 f"医疗知识：`{'on' if snapshot['medical_knowledge_enabled'] else 'off'}` · "
@@ -1341,7 +1380,7 @@ def split_assistant_sections(content: str) -> dict[str, str]:
 
         if header in {"参考来源", "参考文献", "references"}:
             source_parts.append(section_body)
-        elif header in {"回答依据", "思考过程", "推理过程", "分析过程"}:
+        elif header in {"回答依据", "附件解析", "思考过程", "推理过程", "分析过程"}:
             reasoning_parts.append(section_body)
         else:
             answer_parts.append(content[match.start() : next_start])
@@ -1387,22 +1426,59 @@ def display_message(role: str, content: str) -> None:
                 st.markdown(sections["sources"])
 
 
-def process_prompt(prompt: str) -> None:
+def parse_chat_attachments(prompt: str, uploaded_files: list[Any] | None) -> list[AttachmentContext]:
+    if not uploaded_files:
+        return []
+
+    vision_summarizer = None
+    if st.session_state.agent and APP_CONFIG["vision_enabled"]:
+        vision_summarizer = st.session_state.agent.summarize_image_attachment
+
+    contexts: list[AttachmentContext] = []
+    for uploaded_file in uploaded_files:
+        contexts.append(
+            parse_attachment_bytes(
+                uploaded_file.name,
+                uploaded_file.getvalue(),
+                content_type=getattr(uploaded_file, "type", "") or "",
+                question=prompt,
+                vision_summarizer=vision_summarizer,
+            )
+        )
+    return contexts
+
+
+def build_user_display_content(prompt: str, attachments: list[AttachmentContext]) -> str:
+    if not attachments:
+        return prompt
+    lines = [prompt.strip(), "", "本轮附件："]
+    for item in attachments:
+        status = "可解析" if item.can_reference else "未解析"
+        lines.append(f"- {item.filename}（{status}）")
+    return "\n".join(lines).strip()
+
+
+def process_prompt(prompt: str, uploaded_files: list[Any] | None = None) -> None:
     save_to_personal = bool(
         st.session_state.get("save_next_prompt_to_personal_knowledge", False)
     )
+    with st.spinner("解析本轮附件..."):
+        attachment_contexts = parse_chat_attachments(prompt, uploaded_files)
+
     if save_to_personal:
-        save_single_prompt_to_personal_knowledge(prompt)
+        save_single_prompt_to_personal_knowledge(prompt, attachment_contexts)
         st.session_state.reset_single_prompt_save_option = True
 
-    display_message("user", prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    user_display = build_user_display_content(prompt, attachment_contexts)
+    display_message("user", user_display)
+    st.session_state.messages.append({"role": "user", "content": user_display})
 
     with st.spinner("检索知识与生成回答中..."):
-        response = st.session_state.agent.chat(prompt)
+        response = st.session_state.agent.chat(prompt, attachments=attachment_contexts)
 
     display_message("assistant", response)
     st.session_state.messages.append({"role": "assistant", "content": response})
+    st.session_state.chat_attachment_version += 1
 
 
 def render_chat_workspace(snapshot: dict[str, Any]) -> None:
@@ -1421,7 +1497,13 @@ def render_chat_workspace(snapshot: dict[str, Any]) -> None:
             unsafe_allow_html=True,
         )
         render_example_prompts(enabled=False)
-        st.chat_input("请先初始化 Agent 后再提问。", disabled=True)
+        st.text_area(
+            "提问",
+            placeholder="请先初始化 Agent 后再提问。",
+            disabled=True,
+            label_visibility="collapsed",
+            height=92,
+        )
         return
 
     if not st.session_state.messages:
@@ -1441,22 +1523,57 @@ def render_chat_workspace(snapshot: dict[str, Any]) -> None:
         display_message(message["role"], message["content"])
 
     queued_prompt = st.session_state.pending_prompt
-    st.checkbox(
-        "将本次提问加入个人信息库",
-        key="save_next_prompt_to_personal_knowledge",
-        help=(
-            "只保存下一条发送的用户原文，不保存整个会话；发送后会自动关闭。"
-            "如果个人信息库开关关闭，本轮回答不会使用该资料，但会保存供之后打开时使用。"
-        ),
-    )
-    prompt = st.chat_input("输入医药问题，例如用法用量、不良反应、禁忌或特殊人群注意事项...")
+    st.markdown('<div class="composer-gap"></div>', unsafe_allow_html=True)
+    with st.form(
+        key=f"chat_composer_{st.session_state.chat_attachment_version}",
+        clear_on_submit=True,
+    ):
+        input_col, attachment_col = st.columns([5.6, 2.2], gap="medium")
+        with input_col:
+            prompt = st.text_area(
+                "提问",
+                placeholder="输入医药问题，例如用法用量、不良反应、禁忌或特殊人群注意事项...",
+                label_visibility="collapsed",
+                height=92,
+                key=f"chat_prompt_{st.session_state.chat_attachment_version}",
+            )
+        with attachment_col:
+            uploaded_files = st.file_uploader(
+                "本轮附件",
+                type=chat_attachment_file_types(),
+                accept_multiple_files=True,
+                key=f"chat_attachments_{st.session_state.chat_attachment_version}",
+                help="附件只参与下一次提问，不会自动写入医疗知识库或个人信息库。支持文本、PDF、docx 和常见图片。",
+            )
+            if uploaded_files:
+                names = "、".join(file.name for file in uploaded_files)
+                st.markdown(f'<p class="composer-note">已选择：{names}</p>', unsafe_allow_html=True)
+
+        option_col, send_col = st.columns([5.6, 2.2], gap="medium")
+        with option_col:
+            st.checkbox(
+                "将本次提问加入个人信息库",
+                key="save_next_prompt_to_personal_knowledge",
+                help=(
+                    "只保存下一条发送的用户原文，不保存整个会话；发送后会自动关闭。"
+                    "如果个人信息库开关关闭，本轮回答不会使用该资料，但会保存供之后打开时使用。"
+                ),
+            )
+        with send_col:
+            submitted = st.form_submit_button("发送", type="primary", use_container_width=True)
+
     if queued_prompt:
         st.session_state.pending_prompt = ""
-        process_prompt(queued_prompt)
+        process_prompt(queued_prompt, uploaded_files)
         return
 
-    if prompt:
-        process_prompt(prompt)
+    if submitted:
+        normalized_prompt = normalize_chat_prompt(prompt, bool(uploaded_files))
+        if not normalized_prompt:
+            st.session_state.status_level = "warning"
+            st.session_state.status_message = "请先输入问题，或上传附件后再发送。"
+            st.rerun()
+        process_prompt(normalized_prompt, uploaded_files)
 
 
 def main() -> None:

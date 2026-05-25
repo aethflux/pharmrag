@@ -25,7 +25,7 @@ def _get_env_list(name: str) -> list[str]:
     raw = os.getenv(name, "")
     return [item.strip() for item in raw.split(",") if item.strip()]
 
-DEFAULT_PROVIDER = os.getenv("LLM_PROVIDER", "openai")
+DEFAULT_PROVIDER = os.getenv("LLM_PROVIDER", "modelscope")
 
 LLM_PROVIDERS: Dict[str, Dict[str, Any]] = {
     "openai": {
@@ -38,12 +38,10 @@ LLM_PROVIDERS: Dict[str, Dict[str, Any]] = {
         "model": "moonshotai/Kimi-K2.5",
         "api_key_env": "MODELSCOPE_API_KEY",
     },
-    "minimax": {
-        "api_base": "https://api.minimaxi.com/v1",
-        "model": "MiniMax-M2.5",
-        "api_key_env": "MINIMAX_API_KEY",
-    },
 }
+
+if DEFAULT_PROVIDER not in LLM_PROVIDERS:
+    DEFAULT_PROVIDER = "modelscope"
 
 EMBEDDING_MODELS: Dict[str, Dict[str, Any]] = {
     "openai": {
@@ -63,6 +61,8 @@ EMBEDDING_PROVIDER = os.getenv(
     "EMBEDDING_PROVIDER",
     DEFAULT_PROVIDER if DEFAULT_PROVIDER in EMBEDDING_MODELS else "none",
 )
+if EMBEDDING_PROVIDER not in EMBEDDING_MODELS and EMBEDDING_PROVIDER != "none":
+    EMBEDDING_PROVIDER = DEFAULT_PROVIDER if DEFAULT_PROVIDER in EMBEDDING_MODELS else "none"
 
 APP_CONFIG = {
     "title": "医药智能 Agent",
@@ -111,6 +111,19 @@ APP_CONFIG = {
     "ocr_max_pages": int(os.getenv("OCR_MAX_PAGES", "20")),
     "tesseract_cmd": os.getenv("TESSERACT_CMD", ""),
     "tessdata_prefix": os.getenv("TESSDATA_PREFIX", ""),
+    "attachment_max_bytes": int(os.getenv("ATTACHMENT_MAX_BYTES", str(8 * 1024 * 1024))),
+    "attachment_preview_chars": int(os.getenv("ATTACHMENT_PREVIEW_CHARS", "6000")),
+    "vision_enabled": _get_env_bool("VISION_ENABLED", True),
+    "vision_provider": os.getenv("VISION_PROVIDER", "modelscope"),
+    "vision_model": os.getenv("VISION_MODEL", "Qwen/Qwen2.5-VL-72B-Instruct"),
+    "vision_prompt": os.getenv(
+        "VISION_PROMPT",
+        (
+            "请用中文客观描述这张图片中与用户医药问题相关的可见信息。"
+            "如果是药盒、说明书、检查报告或截图，优先提取关键文字。"
+            "如果是外伤、皮疹或影像图片，只描述可见现象，不做诊断结论。"
+        ),
+    ),
 }
 
 KNOWLEDGE_DIR = "knowledge"

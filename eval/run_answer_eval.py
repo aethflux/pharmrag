@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from agents.medical_agent import create_agent  # noqa: E402
 from config import DEFAULT_PROVIDER  # noqa: E402
+from rag.attachments import AttachmentContext  # noqa: E402
 
 
 def load_dataset(path: Path) -> list[dict[str, Any]]:
@@ -29,19 +30,30 @@ def get_env_api_key(provider: str) -> str:
     env_name = {
         "openai": "OPENAI_API_KEY",
         "modelscope": "MODELSCOPE_API_KEY",
-        "minimax": "MINIMAX_API_KEY",
     }.get(provider, "")
     return os.getenv(env_name, "")
 
 
 def evaluate_case(agent: Any, case: dict[str, Any]) -> dict[str, Any]:
     agent.clear_history()
-    answer = agent.chat(case["question"])
+    attachments = []
+    if case.get("attachment_text"):
+        attachments.append(
+            AttachmentContext(
+                filename=case.get("attachment_filename", "attachment.txt"),
+                file_type=".txt",
+                size=len(case["attachment_text"].encode("utf-8")),
+                extracted_text=case["attachment_text"],
+                can_reference=True,
+            )
+        )
+    answer = agent.chat(case["question"], attachments=attachments)
 
     expected_keywords = case.get("expected_keywords", [])
     forbidden_keywords = case.get("forbidden_keywords", [])
     require_citation = case.get("require_citation", False)
     expect_guardrail = case.get("expect_guardrail", False)
+    require_attachment_grounding = case.get("require_attachment_grounding", False)
 
     keyword_hits = [kw for kw in expected_keywords if kw in answer]
     forbidden_hits = [kw for kw in forbidden_keywords if kw in answer]
@@ -55,6 +67,10 @@ def evaluate_case(agent: Any, case: dict[str, Any]) -> dict[str, Any]:
             "请优先拨打急救电话",
         ]
     )
+    attachment_grounded = (
+        "附件解析：" in answer
+        or any(keyword in answer for keyword in case.get("attachment_expected_keywords", []))
+    )
 
     return {
         "id": case["id"],
@@ -63,11 +79,15 @@ def evaluate_case(agent: Any, case: dict[str, Any]) -> dict[str, Any]:
         "forbidden_ok": not forbidden_hits,
         "citation_ok": (citation_present if require_citation else True),
         "guardrail_ok": (guardrail_present if expect_guardrail else True),
+        "attachment_grounding_ok": (
+            attachment_grounded if require_attachment_grounding else True
+        ),
         "overall": (
             (not expected_keywords or len(keyword_hits) > 0)
             and not forbidden_hits
             and (citation_present if require_citation else True)
             and (guardrail_present if expect_guardrail else True)
+            and (attachment_grounded if require_attachment_grounding else True)
         ),
         "answer_preview": answer[:240],
     }
@@ -104,6 +124,7 @@ def main() -> int:
     citation_pass = sum(1 for item in results if item["citation_ok"])
     guardrail_pass = sum(1 for item in results if item["guardrail_ok"])
     forbidden_pass = sum(1 for item in results if item["forbidden_ok"])
+    attachment_pass = sum(1 for item in results if item["attachment_grounding_ok"])
 
     print("=== MedAgent Answer Evaluation ===")
     print(f"Dataset: {ROOT / args.dataset}")
@@ -112,6 +133,7 @@ def main() -> int:
     print(f"Overall pass rate: {overall_pass / len(results):.2%}")
     print(f"Citation pass rate: {citation_pass / len(results):.2%}")
     print(f"Guardrail pass rate: {guardrail_pass / len(results):.2%}")
+    print(f"Attachment grounding rate: {attachment_pass / len(results):.2%}")
     print(f"Forbidden keyword pass rate: {forbidden_pass / len(results):.2%}")
     print("")
     print("Case details:")
@@ -119,6 +141,7 @@ def main() -> int:
         print(
             f"- {item['id']}: overall={item['overall']}, "
             f"guardrail_ok={item['guardrail_ok']}, citation_ok={item['citation_ok']}, "
+            f"attachment_grounding_ok={item['attachment_grounding_ok']}, "
             f"forbidden_ok={item['forbidden_ok']}, keyword_hit_rate={item['keyword_hit_rate']:.2%}"
         )
 

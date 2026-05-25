@@ -8,6 +8,7 @@ import uuid
 from langchain_core.documents import Document
 
 from agents.medical_agent import MedicalAgent
+from rag.attachments import AttachmentContext
 from rag.retriever import KnowledgeRetriever
 
 
@@ -75,9 +76,37 @@ class MedicalAgentTests(unittest.TestCase):
 
         answer = agent._build_local_fallback_answer("二甲双胍怎么吃", docs)
 
-        self.assertIn("根据本地知识库整理", answer)
+        self.assertIn("根据本轮附件或本地知识库整理", answer)
         self.assertIn("知识片段", answer)
         self.assertIn("- drugs.md", answer)
+
+    def test_build_local_fallback_answer_can_use_attachment_context(self) -> None:
+        agent = MedicalAgent.__new__(MedicalAgent)
+
+        answer = agent._build_local_fallback_answer(
+            "这份报告怎么看？",
+            [],
+            "【附件 1：report.txt】\n空腹血糖 7.2 mmol/L",
+        )
+
+        self.assertIn("本轮附件解析结果", answer)
+        self.assertIn("空腹血糖", answer)
+
+    def test_assess_medical_risk_detects_medical_visual_attachment(self) -> None:
+        agent = MedicalAgent.__new__(MedicalAgent)
+        attachment = AttachmentContext(
+            filename="wound.jpg",
+            file_type=".jpg",
+            size=123,
+            is_image=True,
+            vision_summary="可见皮肤红肿。",
+            can_reference=True,
+        )
+
+        risk = agent._assess_medical_risk("这张外伤图片应该怎么处理？", [attachment])
+
+        self.assertEqual(risk["level"], "image_medical")
+        self.assertIn("medical_visual_attachment", risk["flags"])
 
     def test_retrieve_context_respects_independent_knowledge_switches(self) -> None:
         class FakeRetriever:
@@ -202,7 +231,7 @@ class MedicalAgentTests(unittest.TestCase):
 
     def test_to_openai_messages_merges_system_context_for_provider_compatibility(self) -> None:
         agent = MedicalAgent.__new__(MedicalAgent)
-        agent.provider = "minimax"
+        agent.provider = "modelscope"
         agent.summary_memory = "- 用户长期服用二甲双胍"
         agent.conversation_history = [
             {"role": "user", "content": "之前问过二甲双胍"},
@@ -213,6 +242,7 @@ class MedicalAgentTests(unittest.TestCase):
             "二甲双胍应该饭前吃还是饭后吃？",
             "二甲双胍建议随餐服用。",
             ["涉及特殊人群时请更谨慎。"],
+            "【附件 1：report.txt】\n空腹血糖 7.2 mmol/L",
         )
 
         self.assertEqual(messages[0]["role"], "system")
@@ -220,6 +250,7 @@ class MedicalAgentTests(unittest.TestCase):
         self.assertIn("涉及特殊人群时请更谨慎。", messages[0]["content"])
         self.assertIn("用户长期服用二甲双胍", messages[0]["content"])
         self.assertIn("知识库补充内容", messages[0]["content"])
+        self.assertIn("本轮附件", messages[0]["content"])
         self.assertEqual(messages[1]["role"], "user")
         self.assertEqual(messages[2]["role"], "assistant")
         self.assertEqual(messages[-1]["role"], "user")
@@ -235,7 +266,7 @@ class MedicalAgentTests(unittest.TestCase):
             agent.current_session_file = agent.memory_dir / "current_session.json"
             agent.current_session_id = "session-1"
             agent.current_session_title = "问题A"
-            agent.provider = "minimax"
+            agent.provider = "modelscope"
             agent.conversation_history = [
                 {"role": "user", "content": "问题A"},
                 {"role": "assistant", "content": "回答A"},
@@ -264,7 +295,7 @@ class MedicalAgentTests(unittest.TestCase):
             agent.current_session_file = agent.memory_dir / "current_session.json"
             agent.current_session_id = "session-1"
             agent.current_session_title = "二甲双胍怎么吃"
-            agent.provider = "minimax"
+            agent.provider = "modelscope"
             agent.conversation_history = [
                 {"role": "user", "content": "二甲双胍怎么吃"},
                 {"role": "assistant", "content": "建议随餐服用"},
@@ -300,7 +331,7 @@ class MedicalAgentTests(unittest.TestCase):
             agent.current_session_file = agent.memory_dir / "current_session.json"
             agent.current_session_id = "session-1"
             agent.current_session_title = "初始标题"
-            agent.provider = "minimax"
+            agent.provider = "modelscope"
             agent.conversation_history = [
                 {"role": "user", "content": "初始问题"},
                 {"role": "assistant", "content": "初始回答"},

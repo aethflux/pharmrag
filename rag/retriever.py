@@ -517,6 +517,24 @@ class KnowledgeRetriever:
             digest.update(filepath.read_bytes())
         return digest.hexdigest()
 
+    def _file_manifest_entries(self, files: Iterable[Path]) -> list[dict[str, object]]:
+        root = Path(getattr(self, "knowledge_dir", KNOWLEDGE_DIR))
+        entries: list[dict[str, object]] = []
+        for filepath in files:
+            try:
+                relative_path = filepath.relative_to(root)
+            except ValueError:
+                relative_path = filepath
+            content = filepath.read_bytes()
+            entries.append(
+                {
+                    "path": str(relative_path),
+                    "size": len(content),
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                }
+            )
+        return entries
+
     def _current_manifest(self) -> dict:
         files = self._knowledge_files()
         return {
@@ -538,8 +556,9 @@ class KnowledgeRetriever:
             "ocr_dpi": APP_CONFIG["ocr_dpi"],
             "ocr_max_pages": APP_CONFIG["ocr_max_pages"],
             "knowledge_signature": self._hash_files(files),
+            "files": self._file_manifest_entries(files),
             "file_count": len(files),
-            "loader_version": 9,
+            "loader_version": 10,
         }
 
     def _read_manifest(self) -> dict | None:
