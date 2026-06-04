@@ -1,6 +1,10 @@
 # PharmRAG
 
-PharmRAG 是一个面向医药问答场景的 RAG Agent Demo，支持 ModelScope/OpenAI 兼容模型、FAISS 检索、双知识库开关、单轮文件/图片提问、OCR、视觉摘要、长期记忆、FastAPI 和 Streamlit UI。
+PharmRAG 是一个面向医药问答场景的 RAG 问答系统 Demo，支持 ModelScope/OpenAI 兼容模型、FAISS 检索、双知识库开关、单轮文件/图片提问、OCR、视觉摘要、长期记忆、FastAPI 和 Streamlit UI。
+
+## 界面演示
+
+![PharmRAG 界面演示](docs/images/pharmrag-demo.png)
 
 ## 核心功能
 
@@ -49,7 +53,7 @@ Streamlit UI / FastAPI
   |      |-- Vision summary
   |
   v
-PharmRAGAgent
+PharmRAG Core
   |-- risk_check
   |-- attachment_extract
   |-- retrieve
