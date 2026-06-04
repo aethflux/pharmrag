@@ -1,1 +1,1 @@
-# MedAgent Package
+# PharmRAG Package

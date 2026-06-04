@@ -32,6 +32,9 @@ from config import (
 )
 from rag.ocr import IMAGE_KNOWLEDGE_EXTENSIONS, image_file_to_text, pdf_file_to_ocr_text
 
+PHARMRAG_FRONTMATTER_PREFIX = "pharmrag"
+LEGACY_FRONTMATTER_PREFIX = "med" + "agent"
+
 try:
     from bs4 import BeautifulSoup
 except ImportError:  # pragma: no cover
@@ -214,14 +217,21 @@ class KnowledgeRetriever:
             {"source": str(filepath), "file_type": filepath.suffix.lower()}
         )
 
-        source_url = str(frontmatter.get("medagent_source_url", "")).strip()
+        source_url = str(self._frontmatter_value(frontmatter, "source_url")).strip()
         if source_url.startswith(("http://", "https://")):
             metadata["source"] = source_url
             metadata["source_file"] = str(filepath)
-            metadata["source_title"] = str(frontmatter.get("medagent_source_title", "")).strip()
-            metadata["source_type"] = str(frontmatter.get("medagent_source_type", "")).strip()
+            metadata["source_title"] = str(self._frontmatter_value(frontmatter, "source_title")).strip()
+            metadata["source_type"] = str(self._frontmatter_value(frontmatter, "source_type")).strip()
 
         return [Document(page_content=body, metadata=metadata)]
+
+    def _frontmatter_value(self, frontmatter: dict[str, str], key: str) -> str:
+        return (
+            frontmatter.get(f"{PHARMRAG_FRONTMATTER_PREFIX}_{key}")
+            or frontmatter.get(f"{LEGACY_FRONTMATTER_PREFIX}_{key}")
+            or ""
+        )
 
     def _load_json_file(self, filepath: Path) -> List[Document]:
         content = filepath.read_text(encoding="utf-8")
@@ -334,7 +344,7 @@ class KnowledgeRetriever:
 
         request = Request(
             url,
-            headers={"User-Agent": "medagent-rag-loader/1.0"},
+            headers={"User-Agent": "pharmrag-rag-loader/1.0"},
         )
         with urlopen(request, timeout=APP_CONFIG["url_fetch_timeout"]) as response:
             charset = response.headers.get_content_charset() or "utf-8"

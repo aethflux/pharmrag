@@ -1,6 +1,6 @@
-# MedAgent RAG Agent
+# PharmRAG
 
-MedAgent 是一个面向医药问答场景的 RAG Agent Demo，支持 ModelScope/OpenAI 兼容模型、FAISS 检索、双知识库开关、单轮文件/图片提问、OCR、视觉摘要、长期记忆、FastAPI 和 Streamlit UI。
+PharmRAG 是一个面向医药问答场景的 RAG Agent Demo，支持 ModelScope/OpenAI 兼容模型、FAISS 检索、双知识库开关、单轮文件/图片提问、OCR、视觉摘要、长期记忆、FastAPI 和 Streamlit UI。
 
 ## 核心功能
 
@@ -49,7 +49,7 @@ Streamlit UI / FastAPI
   |      |-- Vision summary
   |
   v
-MedicalAgent
+PharmRAGAgent
   |-- risk_check
   |-- attachment_extract
   |-- retrieve
@@ -107,13 +107,13 @@ TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
 ### 3. 启动 Streamlit
 
 ```powershell
-.\start_medagent.ps1
+.\start_pharmrag.ps1
 ```
 
 关闭服务：
 
 ```powershell
-.\stop_medagent.ps1
+.\stop_pharmrag.ps1
 ```
 
 也可以直接启动：
@@ -156,8 +156,8 @@ docker compose version
 ### 2. 拉取项目
 
 ```powershell
-git clone https://github.com/dayinluoyunze/medagent.git
-cd medagent
+git clone https://github.com/aethflux/pharmrag.git
+cd pharmrag
 ```
 
 如果是服务器，也可以通过压缩包上传项目目录，确保包含 `Dockerfile`、`docker-compose.yml`、`requirements.txt`、`app.py`、`api.py`、`agents/`、`rag/`、`knowledge/` 等文件。

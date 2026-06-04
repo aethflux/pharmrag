@@ -116,7 +116,7 @@ LLM_PROVIDERS = {
 ### 项目结构
 
 ```
-medagent/
+pharmrag/
 ├── app.py                 # Streamlit主应用
 ├── config.py              # API配置
 ├── knowledge/             # 知识库文件

@@ -1336,7 +1336,7 @@ def render_header(snapshot: dict[str, Any]) -> None:
     st.markdown(
         f"""
 <div class="minimal-shell">
-  <div class="minimal-title">MedAgent RAG</div>
+  <div class="minimal-title">PharmRAG</div>
   <p class="minimal-copy">面向医药问答的 RAG Agent。主屏保持聊天，知识库、会话和运行状态收在左侧。</p>
   <div class="status-strip">{pill_html}</div>
 </div>

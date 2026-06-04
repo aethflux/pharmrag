@@ -97,7 +97,7 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run offline retrieval evaluation for MedAgent."
+        description="Run offline retrieval evaluation for PharmRAG."
     )
     parser.add_argument(
         "--dataset",
@@ -144,7 +144,7 @@ def main() -> int:
     results = [evaluate_case(retriever, case, args.k) for case in dataset]
     summary = summarize(results)
 
-    print("=== MedAgent Retrieval Evaluation ===")
+    print("=== PharmRAG Retrieval Evaluation ===")
     print(f"Dataset: {dataset_path}")
     print(f"Cases: {summary['cases']}")
     print(f"Retriever mode: {mode}")

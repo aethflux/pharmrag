@@ -42,7 +42,7 @@ if (-not (Test-Path $pythonExe)) {
 }
 
 if (-not (Test-Path $envFile)) {
-    throw "Missing .env file. Configure it before starting MedAgent."
+    throw "Missing .env file. Configure it before starting PharmRAG."
 }
 
 if (-not (Test-Path $logsDir)) {
@@ -58,7 +58,7 @@ if (Test-Path $pidFile) {
             if (Test-Path $portFile) {
                 $existingPort = (Get-Content $portFile -ErrorAction SilentlyContinue | Select-Object -First 1).Trim()
             }
-            Write-Host "MedAgent is already running. PID: $existingPid"
+            Write-Host "PharmRAG is already running. PID: $existingPid"
             Write-Host "URL: http://localhost:$existingPort"
             return
         }
@@ -92,7 +92,7 @@ $process = Start-Process `
 Start-Sleep -Seconds 3
 
 if ($process.HasExited) {
-    Write-Host "MedAgent failed to start."
+    Write-Host "PharmRAG failed to start."
     if (Test-Path $stderrLog) {
         Write-Host "Error log:"
         Get-Content $stderrLog
@@ -103,7 +103,7 @@ if ($process.HasExited) {
 Set-Content -Path $pidFile -Value $process.Id
 Set-Content -Path $portFile -Value $port
 
-Write-Host "MedAgent started."
+Write-Host "PharmRAG started."
 Write-Host "PID: $($process.Id)"
 Write-Host "URL: http://localhost:$port"
 Write-Host "Stdout log: $stdoutLog"

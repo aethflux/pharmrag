@@ -7,7 +7,7 @@ $portFile = Join-Path $logsDir "streamlit.port"
 $targetPids = @()
 
 if (-not (Test-Path $pidFile)) {
-    Write-Host "No MedAgent PID file found. Nothing to stop."
+    Write-Host "No PharmRAG PID file found. Nothing to stop."
     exit 0
 }
 
@@ -62,4 +62,4 @@ foreach ($process in $runningProcesses) {
 Remove-Item $pidFile -ErrorAction SilentlyContinue
 Remove-Item $portFile -ErrorAction SilentlyContinue
 
-Write-Host ("MedAgent stopped. PIDs: {0}" -f (($runningProcesses | Select-Object -ExpandProperty Id) -join ", "))
+Write-Host ("PharmRAG stopped. PIDs: {0}" -f (($runningProcesses | Select-Object -ExpandProperty Id) -join ", "))

@@ -94,7 +94,7 @@ def evaluate_case(agent: Any, case: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run answer-level evaluation for MedAgent.")
+    parser = argparse.ArgumentParser(description="Run answer-level evaluation for PharmRAG.")
     parser.add_argument(
         "--dataset",
         default=str(Path("eval") / "answer_dataset.jsonl"),
@@ -126,7 +126,7 @@ def main() -> int:
     forbidden_pass = sum(1 for item in results if item["forbidden_ok"])
     attachment_pass = sum(1 for item in results if item["attachment_grounding_ok"])
 
-    print("=== MedAgent Answer Evaluation ===")
+    print("=== PharmRAG Answer Evaluation ===")
     print(f"Dataset: {ROOT / args.dataset}")
     print(f"Provider: {args.provider}")
     print(f"Cases: {len(results)}")

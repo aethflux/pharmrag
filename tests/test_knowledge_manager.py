@@ -77,7 +77,7 @@ class KnowledgeManagerTests(unittest.TestCase):
             self.assertEqual(errors, [])
             self.assertEqual(len(paths), 1)
             content = paths[0].read_text(encoding="utf-8")
-            self.assertIn("medagent_source_url: https://example.com/guide", content)
+            self.assertIn("pharmrag_source_url: https://example.com/guide", content)
             self.assertIn("二甲双胍随餐服用", content)
 
     def test_list_uploaded_knowledge_returns_recent_files(self) -> None:

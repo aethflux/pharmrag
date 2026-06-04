@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Named MedAgent workflow steps.
+Named PharmRAG workflow steps.
 
 LangGraph is optional at runtime. The application keeps a lightweight step list
 for logs/tests and can build a no-op graph when langgraph is installed.

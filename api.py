@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-FastAPI backend for MedAgent.
+FastAPI backend for PharmRAG.
 
 The Streamlit UI remains the default demo surface. This API exposes the same
 agent flow for engineering demos and integration tests.
@@ -31,7 +31,7 @@ from rag.attachments import (
 from rag.knowledge_manager import write_text_knowledge, write_uploaded_knowledge, write_url_knowledge
 
 
-app = FastAPI(title="MedAgent API", version="0.2.0")
+app = FastAPI(title="PharmRAG API", version="0.2.0")
 
 _AGENT_CACHE: dict[tuple[str, str, str, str], Any] = {}
 

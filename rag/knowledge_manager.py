@@ -180,7 +180,7 @@ def fetch_url_snapshot(url: str) -> dict[str, str]:
     parsed = urlparse(validated_url)
     request = Request(
         validated_url,
-        headers={"User-Agent": "medagent-knowledge-ingest/1.0"},
+        headers={"User-Agent": "pharmrag-knowledge-ingest/1.0"},
     )
 
     with urlopen(request, timeout=APP_CONFIG["url_fetch_timeout"]) as response:
@@ -277,7 +277,7 @@ def write_text_knowledge(
     _ensure_inside(target, uploads)
     added_at = datetime.now().isoformat(timespec="seconds")
     target.write_text(
-        f"# {clean_title}\n\n来源：MedAgent 网页添加\n添加时间：{added_at}\n\n{body}\n",
+        f"# {clean_title}\n\n来源：PharmRAG 网页添加\n添加时间：{added_at}\n\n{body}\n",
         encoding="utf-8",
     )
     return target
@@ -323,10 +323,10 @@ def write_url_knowledge(
                 "\n".join(
                     [
                         "---",
-                        f"medagent_source_type: url",
-                        f"medagent_source_url: {source_url}",
-                        f"medagent_source_title: {source_title}",
-                        f"medagent_ingested_at: {ingested_at}",
+                        f"pharmrag_source_type: url",
+                        f"pharmrag_source_url: {source_url}",
+                        f"pharmrag_source_title: {source_title}",
+                        f"pharmrag_ingested_at: {ingested_at}",
                         "---",
                         "",
                         f"# {display_title}",

@@ -88,9 +88,9 @@ class RetrieverTests(unittest.TestCase):
             path = Path(tmpdir) / "url-snapshot.md"
             path.write_text(
                 "---\n"
-                "medagent_source_type: url\n"
-                "medagent_source_url: https://example.com/guide\n"
-                "medagent_source_title: 指南\n"
+                "pharmrag_source_type: url\n"
+                "pharmrag_source_url: https://example.com/guide\n"
+                "pharmrag_source_title: 指南\n"
                 "---\n\n"
                 "# 指南\n\n二甲双胍随餐服用。\n",
                 encoding="utf-8",
@@ -101,7 +101,7 @@ class RetrieverTests(unittest.TestCase):
 
             self.assertEqual(docs[0].metadata["source"], "https://example.com/guide")
             self.assertEqual(docs[0].metadata["source_file"], str(path))
-            self.assertNotIn("medagent_source_url", docs[0].page_content)
+            self.assertNotIn("pharmrag_source_url", docs[0].page_content)
 
     def test_custom_knowledge_dir_and_base_are_recorded_in_metadata(self) -> None:
         with TemporaryDirectory() as tmpdir:
